@@ -9,6 +9,10 @@ using System.Xml;
 
 namespace FCF.SAP_REQ
 {
+    /// <summary>
+    /// B19 SAP需求單 TRIGGER
+    /// 將表單資料存入Z_FCF_SAP_REQ資料表
+    /// </summary>
     public class Trigger : ICallbackTriggerPlugin
     {
         public void Finally()
