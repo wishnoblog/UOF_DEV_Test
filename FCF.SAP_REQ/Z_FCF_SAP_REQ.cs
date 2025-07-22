@@ -6,6 +6,9 @@ using System.Threading.Tasks;
 
 namespace FCF.SAP_REQ
 {
+    /// <summary>
+    /// B19 SAP需求單
+    /// </summary>
     public class Z_FCF_SAP_REQ
     {
         /// <summary>
@@ -21,19 +24,19 @@ namespace FCF.SAP_REQ
         /// <summary>
         /// 申請名稱
         /// </summary>
-        public string APPLICANT_NAME { get; internal set; }
+        public string APPLICANT_NAME { get; set; }
 
 
         /// <summary>
         /// 申請者部門GUID
         /// </summary>
-        public string APPLICANTDEPT { get; internal set; }
+        public string APPLICANTDEPT { get; set; }
 
 
         /// <summary>
         /// 申請者部門名稱
         /// </summary>
-        public string APPLICANTDEPT_NAME { get; internal set; }
+        public string APPLICANTDEPT_NAME { get; set; }
 
         /// <summary>
         /// 主旨

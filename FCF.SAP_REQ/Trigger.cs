@@ -74,6 +74,7 @@ namespace FCF.SAP_REQ
                 model.APPLICANT = data.Rows[0]["USER_GUID"].ToString();
             }
             #endregion
+
             #region 取得部門
             var applicantDept = GerRealValue(doc, "APPLICANTDEPT");
             if (!string.IsNullOrEmpty(applicantDept))
