@@ -1,12 +1,14 @@
-﻿using Ede.Uof.Utility.Data;
+﻿using Dapper;
+using Ede.Uof.Utility.Data;
 using Ede.Uof.WKF.ExternalUtility;
+using Quartz.Collection;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
-using Dapper;
 
 namespace FCF.TRIGGER_SAMPLE
 {
@@ -47,6 +49,9 @@ namespace FCF.TRIGGER_SAMPLE
             //將目前表單內容讀到 doc物件當中
             XmlDocument doc = new XmlDocument();
             doc.LoadXml(applyTask.CurrentDocXML);
+            //將表單內容存一分到硬碟中(上線會註解掉) 用於後續拆解XML
+            doc.Save($"D:\\UOF_DEBUG\\{DOC_NBR}{DateTime.Now.ToString("yyyy-MM-dd-hh-mm-ss")}.xml");
+
             var model = new Z_FCF_TEST_TRIGGER();
             //將表單內容轉換成物件
             model.DOC_NBR = DOC_NBR;
@@ -64,23 +69,104 @@ namespace FCF.TRIGGER_SAMPLE
             model.SUM = TryParseDecimal(GetFieldValue(doc, "SUM"));
             model.TIMETEST = GetFieldValue(doc, "TIMETEST");
 
-            if (IsExist(model.DOC_NBR))
+   
+
+            using (var connection = new System.Data.SqlClient.SqlConnection(_connectionString))
             {
-                //如果已經存在資料，就更新
-                Update(model);
-            }
-            else
-            {
-                //如果不存在，就新增
-                Insert(model);
-            }
-            //將表單內容存一分到硬碟中(上線會註解掉) 用於後續拆解XML
-            //doc.Save($"D:\\UOF_DEBUG\\{DOC_NBR}{DateTime.Now.ToString("yyyy-MM-dd-hh-mm-ss")}.xml");            
+                connection.Open();
+                IDbTransaction trans = connection.BeginTransaction();
+
+                try
+                {
+                    //異動主表
+                    if (IsExist(model.DOC_NBR))
+                    {
+                        //如果已經存在資料，就更新
+                        Update(model, connection, trans);
+                    }
+                    else
+                    {
+                        //如果不存在，就新增
+                        Insert(model, connection, trans);
+                    }
+                    //異動明細
+                    var details = GetDetail(doc);
+                    Insert(details, DOC_NBR, connection, trans);
+                    //執行異動
+                    trans.Commit();
+                }
+                catch (Exception)
+                {
+                    //如果有錯誤，就還原異動
+                    trans.Rollback();
+                    throw;
+                }             
+            }                      
 
             //故意觸發失敗，讓Trigger可以多次重送,
             //可以到 電子表單 > DLL呼叫情形 進行重送
             throw new Exception("For Test");
             return "";
+        }
+
+        /// <summary>
+        /// 將明細轉為LIST
+        /// </summary>
+        /// <param name="doc">XML文件</param>
+        /// <returns></returns>
+        public List<Z_FCF_TEST_TRIGGER_D1> GetDetail(XmlDocument doc)
+        {
+            var result = new List<Z_FCF_TEST_TRIGGER_D1>();
+
+            // 取得 DOC_NBR
+            string docNbr = doc.SelectSingleNode("//FieldItem[@fieldId='DOC_NBR']")?.Attributes["fieldValue"]?.Value ?? "";
+
+            // 取得所有 Row 節點
+            XmlNodeList rowNodes = doc.SelectNodes("//FieldItem[@fieldId='DL']/DataGrid/Row");
+
+            foreach (XmlNode row in rowNodes)
+            {
+                var detail = new Z_FCF_TEST_TRIGGER_D1
+                {
+                    DOC_NBR = docNbr,
+                    SEQ = int.TryParse(row.Attributes["order"]?.Value, out int seq) ? seq : 0,
+                    ITEM = GetCellValue(row, "ITEM"),
+                    PRICE = TryParseDecimal(GetCellValue(row, "PRICE")),
+                    COUNT = TryParseInt(GetCellValue(row, "COUNT")),
+                    TOTAL = TryParseDecimal(GetCellValue(row, "TOTAL"))
+                };
+
+                result.Add(detail);
+            }
+
+            return result;
+        }
+
+        private void Insert(List<Z_FCF_TEST_TRIGGER_D1> model,string DOC_NBR, IDbConnection connection,IDbTransaction trans)
+        {
+            string sqlDelete = @"
+                    DELETE FROM Z_FCF_TEST_TRIGGER_D1 WHERE DOC_NBR = @DOC_NBR;
+                ";
+            connection.Execute(sqlDelete, new { DOC_NBR }, trans);
+
+            //幫我補完這段SQL
+            string sqlInsert = @"
+                INSERT INTO Z_FCF_TEST_TRIGGER_D1 (DOC_NBR, SEQ, ITEM, PRICE, COUNT, TOTAL)
+                VALUES (@DOC_NBR, @SEQ, @ITEM, @PRICE, @COUNT, @TOTAL);
+            ";
+            connection.Execute(sqlInsert, model, trans);
+        }
+
+        /// <summary>
+        /// 取得XML明細的欄位內容
+        /// </summary>
+        /// <param name="row"></param>
+        /// <param name="fieldId"></param>
+        /// <returns></returns>
+        private string GetCellValue(XmlNode row, string fieldId)
+        {
+            XmlNode cell = row.SelectSingleNode($"Cell[@fieldId='{fieldId}']");
+            return cell?.Attributes["fieldValue"]?.Value ?? "";
         }
 
         /// <summary>
@@ -101,23 +187,20 @@ namespace FCF.TRIGGER_SAMPLE
         /// 新增資料到[Z_FCF_TEST_TRIGGER] 資料表
         /// </summary>
         /// <param name="model"></param>
-        public void Insert(Z_FCF_TEST_TRIGGER model)
+        public void Insert(Z_FCF_TEST_TRIGGER model,IDbConnection connection, IDbTransaction trans = null)
         {
             string sql = @"INSERT INTO Z_FCF_TEST_TRIGGER 
                                 (DOC_NBR, TEXT1, TEXT2, NBR, DATETEST, RD01, CB01, DDL01, SUM, TIMETEST) 
                            VALUES 
                                 (@DOC_NBR, @TEXT1, @TEXT2, @NBR, @DATETEST, @RD01, @CB01, @DDL01, @SUM, @TIMETEST)";
-            using (var connection = new System.Data.SqlClient.SqlConnection(_connectionString))
-            {
-                connection.Execute(sql, model);
-            }
+            connection.Execute(sql, model, trans);            
         }
 
         /// <summary>
         /// 更新資料到[Z_FCF_TEST_TRIGGER] 資料表
         /// </summary>
         /// <param name="model"></param>
-        public void Update(Z_FCF_TEST_TRIGGER model)
+        public void Update(Z_FCF_TEST_TRIGGER model, IDbConnection connection, IDbTransaction trans = null)
         {
             string sql = @"UPDATE Z_FCF_TEST_TRIGGER 
                            SET 
@@ -132,10 +215,7 @@ namespace FCF.TRIGGER_SAMPLE
                                TIMETEST = @TIMETEST 
                            WHERE 
                               DOC_NBR = @DOC_NBR";
-            using (var connection = new System.Data.SqlClient.SqlConnection(_connectionString))
-            {
-                connection.Execute(sql, model);
-            }
+            connection.Execute(sql, model, trans);            
         }
         public void OnError(Exception errorException)
         {
@@ -174,6 +254,8 @@ namespace FCF.TRIGGER_SAMPLE
         {
             return doc.SelectSingleNode($"//FieldItem[@fieldId='{fieldId}']")?.Attributes["fieldValue"]?.Value;
         }
+
+        
         #endregion
     }
 }
